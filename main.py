@@ -314,3 +314,79 @@ st.subheader("이 그래프로 알 수 있는 것")
 st.info(
     "여기에 개봉일 스크린수와 총 관객 사이의 관계에서 발견한 특징을 한 문장으로 적어 보세요."
 )
+
+
+# =================================
+# 그래프 5. 장르별 총 관객 상자 그림
+# =================================
+st.header("5. 장르별 총 관객 분포")
+
+# 장르별 영화 편수가 10편 이상인 장르만 선택
+genre_movie_counts = df["genre_first"].value_counts()
+
+selected_genres = genre_movie_counts[
+    genre_movie_counts >= 10
+].index.tolist()
+
+box_df = (
+    df[
+        [
+            "genre_first",
+            "movieNm",
+            "total_audi",
+        ]
+    ]
+    .dropna(subset=["total_audi"])
+    .copy()
+)
+
+box_df = box_df[
+    box_df["genre_first"].isin(selected_genres)
+]
+
+
+fig5 = px.box(
+    box_df,
+    x="genre_first",
+    y="total_audi",
+    points="outliers",
+    hover_name="movieNm",
+    title="영화가 10편 이상인 장르의 총 관객 분포",
+    labels={
+        "genre_first": "장르",
+        "total_audi": "총 관객",
+    },
+)
+
+fig5.update_traces(
+    marker=dict(
+        size=8,
+        opacity=0.8,
+    ),
+    hovertemplate=(
+        "<b>%{hovertext}</b><br>"
+        "총 관객: %{y:,.0f}명"
+        "<extra></extra>"
+    ),
+)
+
+fig5.update_layout(
+    xaxis_title="장르",
+    yaxis_title="총 관객",
+    margin=dict(t=60, b=20, l=20, r=20),
+)
+
+st.plotly_chart(
+    fig5,
+    use_container_width=True,
+)
+
+st.markdown("---")
+
+st.subheader("이 그래프로 알 수 있는 것")
+
+st.info(
+    "여기에 장르별 총 관객의 중앙값과 분포, 그리고 유난히 관객이 많은 영화의 특징을 한 문장으로 적어 보세요."
+)
+
+)
