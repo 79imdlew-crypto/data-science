@@ -24,13 +24,13 @@ def load_data():
         if pd.isna(value) or str(value).strip() == "":
             return "미분류"
 
-        # 기본 데이터의 장르 구분자는 |이지만,
-        # 일부 데이터에 /가 사용된 경우도 있어 함께 처리
         genre = re.split(r"[|]", str(value))[0].strip()
-
         return genre if genre else "미분류"
 
     df["genre_first"] = df["genre"].apply(first_genre)
+
+    # 총 관객을 숫자로 변환
+    df["total_audi"] = pd.to_numeric(df["total_audi"], errors="coerce")
 
     return df
 
@@ -96,3 +96,40 @@ st.info(
     "여기에 장르별 영화 편수의 분포에서 발견한 특징을 한 문장으로 적어 보세요."
 )
 
+
+# -----------------------------
+# 그래프 2. 장르별 영화 트리맵
+# -----------------------------
+st.header("2. 장르 안에 들어 있는 영화")
+
+treemap_df = df[
+    ["genre_first", "movieNm", "total_audi"]
+].dropna(subset=["total_audi"]).copy()
+
+fig2 = px.treemap(
+    treemap_df,
+    path=["genre_first", "movieNm"],
+    values="total_audi",
+    title="장르별 영화와 총 관객",
+)
+
+fig2.update_traces(
+    hovertemplate=(
+        "<b>%{label}</b><br>"
+        "총 관객: %{value:,.0f}명"
+        "<extra></extra>"
+    ),
+)
+
+fig2.update_layout(
+    margin=dict(t=60, b=20, l=20, r=20),
+)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown("---")
+
+st.subheader("이 그래프로 알 수 있는 것")
+st.info(
+    "여기에 장르별로 어떤 영화가 큰 관객을 모았는지 한 문장으로 적어 보세요."
+)
