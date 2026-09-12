@@ -1,391 +1,212 @@
 
 import re
+from datetime import date, timedelta
 
-import numpy as np
 import pandas as pd
-import plotly.express as px
+import requests
 import streamlit as st
 
+st.set_page_config(page_title="학교 급식 찾아보기", page_icon="🍱", layout="wide")
 
-DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/kobis_movies.csv"
+API_KEY = "a002a61cc69e4a22a41f9c0b840f1341"
+SCHOOL_URL = "https://open.neis.go.kr/hub/schoolInfo"
+MEAL_URL = "https://open.neis.go.kr/hub/mealServiceDietInfo"
 
-
-# ---------------------------------
-# 페이지 설정
-# ---------------------------------
-st.set_page_config(
-    page_title="영화 데이터 그래프 도감 2 - 분포와 관계",
-    page_icon="🎬",
-    layout="wide",
-)
+SCHOOLS = ["도림고등학교", "아라고등학교", "논현고등학교"]
 
 
-# ---------------------------------
-# 데이터 불러오기
-# ---------------------------------
-@st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+def neis_get(url, params):
+    params = {
+        "KEY": API_KEY,
+        "Type": "json",
+        **params,
+    }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    return response.json()
 
-    # 장르가 여러 개이면 첫 번째 장르만 사용
-    def first_genre(value):
-        if pd.isna(value) or str(value).strip() == "":
-            return "미분류"
 
-        genre = re.split(r"[|]", str(value))[0].strip()
-        return genre if genre else "미분류"
-
-    df["genre_first"] = df["genre"].apply(first_genre)
-
-    # 숫자형 데이터로 변환
-    df["first_scrn"] = pd.to_numeric(
-        df["first_scrn"],
-        errors="coerce",
+@st.cache_data(ttl=3600)
+def find_school(school_name):
+    data = neis_get(
+        SCHOOL_URL,
+        {"SCHUL_NM": school_name, "pIndex": 1, "pSize": 5},
     )
+    if "schoolInfo" not in data or len(data["schoolInfo"]) < 2:
+        return None
 
-    df["total_audi"] = pd.to_numeric(
-        df["total_audi"],
-        errors="coerce",
+    rows = data["schoolInfo"][1].get("row", [])
+    # 정확히 일치하는 학교명을 우선 사용
+    exact = [r for r in rows if r.get("SCHUL_NM") == school_name]
+    row = exact[0] if exact else (rows[0] if rows else None)
+    return row
+
+
+@st.cache_data(ttl=1800)
+def get_meals(atpt_code, school_code, from_ymd, to_ymd):
+    data = neis_get(
+        MEAL_URL,
+        {
+            "ATPT_OFCDC_SC_CODE": atpt_code,
+            "SD_SCHUL_CODE": school_code,
+            "MMEAL_SC_CODE": "2",
+            "MLSV_FROM_YMD": from_ymd,
+            "MLSV_TO_YMD": to_ymd,
+            "pSize": 1000,
+            "pIndex": 1,
+        },
     )
+    if "mealServiceDietInfo" not in data or len(data["mealServiceDietInfo"]) < 2:
+        return pd.DataFrame()
 
-    return df
-
-
-df = load_data()
-
-
-# ---------------------------------
-# 제목
-# ---------------------------------
-st.title("영화 데이터 그래프 도감 2 - 분포와 관계")
-
-st.write(
-    "1년간 박스오피스 10위권에 든 영화 가운데 "
-    f"해당 기간에 개봉한 {len(df):,}편의 데이터를 살펴봅니다."
-)
+    rows = data["mealServiceDietInfo"][1].get("row", [])
+    return pd.DataFrame(rows)
 
 
-# =================================
-# 그래프 1. 장르별 영화 편수
-# =================================
-st.header("1. 장르별 영화 편수")
-
-genre_counts = (
-    df["genre_first"]
-    .value_counts()
-    .rename_axis("장르")
-    .reset_index(name="영화 편수")
-)
-
-fig1 = px.pie(
-    genre_counts,
-    names="장르",
-    values="영화 편수",
-    hole=0.55,
-    title="장르별 영화 편수",
-)
-
-fig1.update_traces(
-    textinfo="percent",
-    hovertemplate=(
-        "<b>%{label}</b><br>"
-        "영화 편수: %{value}편<br>"
-        "비율: %{percent}<extra></extra>"
-    ),
-)
-
-fig1.update_layout(
-    showlegend=True,
-    legend_title_text="장르",
-    margin=dict(t=60, b=20, l=20, r=20),
-)
-
-st.plotly_chart(
-    fig1,
-    use_container_width=True,
-)
-
-st.markdown("---")
-
-st.subheader("이 그래프로 알 수 있는 것")
-
-st.info(
-    "여기에 장르별 영화 편수의 분포에서 발견한 특징을 한 문장으로 적어 보세요."
-)
+def parse_number(value):
+    if pd.isna(value):
+        return None
+    text = str(value).replace(",", "")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    return float(match.group()) if match else None
 
 
-# =================================
-# 그래프 2. 장르별 영화 트리맵
-# =================================
-st.header("2. 장르 안에 들어 있는 영화")
+def parse_protein(cal_info):
+    # NEIS CAL_INFO는 보통 "탄수화물(g) 단백질(g) 지방(g) ... 칼로리(kcal)" 형식.
+    # 표준 표기에서 단백질 뒤 숫자를 추출한다.
+    if pd.isna(cal_info):
+        return None
+    text = str(cal_info)
+    match = re.search(r"단백질\s*\(?g\)?\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
+    if match:
+        return float(match.group(1))
 
-treemap_df = (
-    df[
-        [
-            "genre_first",
-            "movieNm",
-            "total_audi",
-        ]
+    # 일부 응답은 "단백질 : 00.0g"처럼 표기될 수 있다.
+    match = re.search(r"단백질[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*g", text, re.I)
+    return float(match.group(1)) if match else None
+
+
+def has_dessert(menu):
+    if pd.isna(menu):
+        return False
+    # 메뉴명에 후식/디저트 성격의 항목이 있는지 간단히 판별
+    keywords = [
+        "후식", "과일", "요구르트", "요거트", "주스", "음료", "푸딩",
+        "아이스크림", "젤리", "떡", "케이크", "쿠키", "빵", "마카롱",
+        "파이", "초코", "바나나", "사과", "배", "귤", "오렌지",
+        "포도", "수박", "참외", "키위", "딸기", "복숭아", "멜론",
     ]
-    .dropna(subset=["total_audi"])
-    .copy()
-)
-
-fig2 = px.treemap(
-    treemap_df,
-    path=["genre_first", "movieNm"],
-    values="total_audi",
-    title="장르별 영화와 총 관객",
-)
-
-fig2.update_traces(
-    hovertemplate=(
-        "<b>%{label}</b><br>"
-        "총 관객: %{value:,.0f}명"
-        "<extra></extra>"
-    ),
-)
-
-fig2.update_layout(
-    margin=dict(t=60, b=20, l=20, r=20),
-)
-
-st.plotly_chart(
-    fig2,
-    use_container_width=True,
-)
-
-st.markdown("---")
-
-st.subheader("이 그래프로 알 수 있는 것")
-
-st.info(
-    "여기에 장르별로 어떤 영화가 큰 관객을 모았는지 한 문장으로 적어 보세요."
-)
+    menu_lower = str(menu).lower()
+    return any(k.lower() in menu_lower for k in keywords)
 
 
-# =================================
-# 그래프 3. 총 관객 히스토그램
-# =================================
-st.header("3. 총 관객 분포")
+@st.cache_data(ttl=1800)
+def load_school_data():
+    today = date.today()
+    six_months_ago = today - timedelta(days=183)
+    from_ymd = six_months_ago.strftime("%Y%m%d")
+    to_ymd = today.strftime("%Y%m%d")
 
-hist_df = (
-    df[
-        [
-            "movieNm",
-            "total_audi",
-        ]
-    ]
-    .dropna(subset=["total_audi"])
-    .copy()
-)
+    result = {}
+    for name in SCHOOLS:
+        info = find_school(name)
+        if not info:
+            result[name] = {"info": None, "meals": pd.DataFrame()}
+            continue
 
-fig3 = px.histogram(
-    hist_df,
-    x="total_audi",
-    nbins=20,
-    title="영화별 총 관객 분포",
-    labels={
-        "total_audi": "총 관객",
-        "count": "영화 편수",
-    },
-)
+        meals = get_meals(
+            info["ATPT_OFCDC_SC_CODE"],
+            info["SD_SCHUL_CODE"],
+            from_ymd,
+            to_ymd,
+        )
+        if not meals.empty:
+            meals["date"] = pd.to_datetime(meals["MLSV_YMD"], format="%Y%m%d", errors="coerce")
+            meals["calories"] = meals["CAL_INFO"].apply(parse_number)
+            meals["protein"] = meals["CAL_INFO"].apply(parse_protein)
+            meals["dessert"] = meals["DDISH_NM"].apply(has_dessert)
+        result[name] = {"info": info, "meals": meals}
 
-fig3.update_traces(
-    hovertemplate=(
-        "총 관객 구간: %{x}<br>"
-        "영화 편수: %{y}편"
-        "<extra></extra>"
-    )
-)
-
-fig3.update_layout(
-    xaxis_title="총 관객",
-    yaxis_title="영화 편수",
-    margin=dict(t=60, b=20, l=20, r=20),
-)
-
-st.plotly_chart(
-    fig3,
-    use_container_width=True,
-)
+    return result, six_months_ago, today
 
 
-# ---------------------------------
-# 히스토그램에서 알 수 있는 내용 계산
-# ---------------------------------
-counts, bin_edges = np.histogram(
-    hist_df["total_audi"],
-    bins=20,
-)
+st.title("🍱 학교 급식 찾아보기")
+st.caption("나이스 교육정보 개방 포털의 중식 데이터를 이용합니다.")
 
-max_bin_index = counts.argmax()
-
-bin_start = bin_edges[max_bin_index]
-bin_end = bin_edges[max_bin_index + 1]
-
-# 가장 관객이 많은 영화
-top_movie = hist_df.loc[
-    hist_df["total_audi"].idxmax()
-]
-
-top_movie_name = top_movie["movieNm"]
-top_movie_audience = int(top_movie["total_audi"])
-
-
-st.markdown("---")
-
-st.subheader("이 그래프로 알 수 있는 것")
+try:
+    data, start_date, end_date = load_school_data()
+except requests.RequestException as e:
+    st.error(f"나이스 API 요청 중 오류가 발생했습니다: {e}")
+    st.stop()
+except Exception as e:
+    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    st.stop()
 
 st.info(
-    f"대부분의 영화는 총 관객 약 "
-    f"{bin_start:,.0f}명~{bin_end:,.0f}명 구간에 몰려 있으며, "
-    f"가장 관객이 많은 영화는 **{top_movie_name}**으로 "
-    f"총 관객은 **{top_movie_audience:,}명**입니다."
+    f"조회 기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} "
+    "(한국 시간 기준 오늘을 끝 날짜로 사용)"
 )
 
+tabs = st.tabs(SCHOOLS)
 
-# =================================
-# 그래프 4. 개봉일 스크린수와 총 관객
-# =================================
-st.header("4. 개봉일 스크린수와 총 관객의 관계")
+for tab, school_name in zip(tabs, SCHOOLS):
+    with tab:
+        school = data[school_name]
+        info = school["info"]
+        df = school["meals"]
 
-scatter_df = (
-    df[
-        [
-            "movieNm",
-            "genre_first",
-            "first_scrn",
-            "total_audi",
-        ]
-    ]
-    .dropna(
-        subset=[
-            "first_scrn",
-            "total_audi",
-        ]
-    )
-    .copy()
-)
+        if not info:
+            st.warning("학교 기본정보를 찾지 못했습니다.")
+            continue
 
-fig4 = px.scatter(
-    scatter_df,
-    x="first_scrn",
-    y="total_audi",
-    color="genre_first",
-    hover_name="movieNm",
-    title="개봉일 스크린수와 총 관객",
-    labels={
-        "first_scrn": "개봉일 스크린수",
-        "total_audi": "총 관객",
-        "genre_first": "장르",
-    },
-)
+        st.subheader(school_name)
+        st.write(
+            f"교육청: {info.get('ATPT_OFCDC_SC_CODE', '-')} · "
+            f"지역: {info.get('LCTN_SC_NM', '-')}"
+        )
 
-fig4.update_traces(
-    marker=dict(
-        size=9,
-        opacity=0.75,
-    ),
-    hovertemplate=(
-        "<b>%{hovertext}</b><br>"
-        "개봉일 스크린수: %{x:,.0f}개<br>"
-        "총 관객: %{y:,.0f}명"
-        "<extra></extra>"
-    ),
-)
+        if df.empty:
+            st.warning("조회 기간에 중식 데이터가 없습니다. (NEIS의 INFO-200일 수 있습니다.)")
+            continue
 
-fig4.update_layout(
-    xaxis_title="개봉일 스크린수",
-    yaxis_title="총 관객",
-    legend_title_text="장르",
-    margin=dict(t=60, b=20, l=20, r=20),
-)
+        # 월별 평균
+        monthly = (
+            df.dropna(subset=["date"])
+            .assign(month=lambda x: x["date"].dt.to_period("M").astype(str))
+            .groupby("month", as_index=False)
+            .agg(
+                평균칼로리=("calories", "mean"),
+                평균단백질=("protein", "mean"),
+                후식제공일수=("dessert", "sum"),
+            )
+        )
 
-st.plotly_chart(
-    fig4,
-    use_container_width=True,
-)
+        st.markdown("### 한달 평균 칼로리")
+        if monthly["평균칼로리"].notna().any():
+            chart_cal = monthly.set_index("month")[["평균칼로리"]]
+            st.line_chart(chart_cal, y="평균칼로리")
+        else:
+            st.warning("칼로리 값이 없어 그래프를 만들 수 없습니다.")
 
-st.markdown("---")
+        st.markdown("### 한달 평균 단백질 함유량")
+        if monthly["평균단백질"].notna().any():
+            chart_protein = monthly.set_index("month")[["평균단백질"]]
+            st.line_chart(chart_protein, y="평균단백질")
+        else:
+            st.warning(
+                "현재 응답의 CAL_INFO에서 단백질 수치를 확인하지 못했습니다. "
+                "나이스 응답 형식이 다른 경우 파싱 규칙을 조정해야 합니다."
+            )
 
-st.subheader("이 그래프로 알 수 있는 것")
+        st.markdown("### 후식 여부")
+        dessert_days = int(df["dessert"].sum())
+        total_days = len(df)
+        if dessert_days > 0:
+            st.success(f"후식으로 판단되는 메뉴가 나온 날이 있습니다. ({dessert_days}/{total_days}일)")
+        else:
+            st.info("조회된 메뉴에서 후식으로 판단되는 항목을 찾지 못했습니다.")
 
-st.info(
-    "여기에 개봉일 스크린수와 총 관객 사이의 관계에서 발견한 특징을 한 문장으로 적어 보세요."
-)
-
-
-# =================================
-# 그래프 5. 장르별 총 관객 상자 그림
-# =================================
-st.header("5. 장르별 총 관객 분포")
-
-# 장르별 영화 편수가 10편 이상인 장르만 선택
-genre_movie_counts = df["genre_first"].value_counts()
-
-selected_genres = genre_movie_counts[
-    genre_movie_counts >= 10
-].index.tolist()
-
-box_df = (
-    df[
-        [
-            "genre_first",
-            "movieNm",
-            "total_audi",
-        ]
-    ]
-    .dropna(subset=["total_audi"])
-    .copy()
-)
-
-box_df = box_df[
-    box_df["genre_first"].isin(selected_genres)
-]
-
-
-fig5 = px.box(
-    box_df,
-    x="genre_first",
-    y="total_audi",
-    points="outliers",
-    hover_name="movieNm",
-    title="영화가 10편 이상인 장르의 총 관객 분포",
-    labels={
-        "genre_first": "장르",
-        "total_audi": "총 관객",
-    },
-)
-
-fig5.update_traces(
-    marker=dict(
-        size=8,
-        opacity=0.8,
-    ),
-    hovertemplate=(
-        "<b>%{hovertext}</b><br>"
-        "총 관객: %{y:,.0f}명"
-        "<extra></extra>"
-    ),
-)
-
-fig5.update_layout(
-    xaxis_title="장르",
-    yaxis_title="총 관객",
-    margin=dict(t=60, b=20, l=20, r=20),
-)
-
-st.plotly_chart(
-    fig5,
-    use_container_width=True,
-)
-
-st.markdown("---")
-
-st.subheader("이 그래프로 알 수 있는 것")
-
-st.info(
-    "여기에 장르별 총 관객의 중앙값과 분포, 그리고 유난히 관객이 많은 영화의 특징을 한 문장으로 적어 보세요."
-)
+        with st.expander("급식 원본 데이터 보기"):
+            show_cols = [c for c in ["MLSV_YMD", "DDISH_NM", "CAL_INFO"] if c in df.columns]
+            st.dataframe(df[show_cols], use_container_width=True)
 
