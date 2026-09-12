@@ -259,7 +259,6 @@ st.info(
 # ==================================================
 st.header("4. 영화별 기간 누적 일관객 TOP 10")
 
-# 영화별 기간 전체 일관객 합계
 movie_total = (
     df.groupby("영화명")
     .agg(
@@ -269,7 +268,6 @@ movie_total = (
     .reset_index()
 )
 
-# 관객 합계 기준 TOP 10
 top10_movies = (
     movie_total
     .sort_values("일관객합계", ascending=False)
@@ -321,9 +319,104 @@ st.info(
 
 
 # ==================================================
-# 그래프 5. 앞으로 추가할 공간
+# 그래프 5. 월 × 요일별 일관객 합계 히트맵
 # ==================================================
-st.header("5. 다음 그래프")
+st.header("5. 월 × 요일별 일관객 합계")
+
+# 날짜에서 월과 요일 추출
+heatmap_df = df.copy()
+
+heatmap_df["월"] = heatmap_df["날짜"].dt.month
+
+# weekday(): 월요일=0, 일요일=6
+weekday_names = [
+    "월요일",
+    "화요일",
+    "수요일",
+    "목요일",
+    "금요일",
+    "토요일",
+    "일요일",
+]
+
+heatmap_df["요일"] = heatmap_df["날짜"].dt.weekday.map(
+    lambda x: weekday_names[x]
+)
+
+# 월 × 요일별 일관객 합계
+monthly_weekday_total = (
+    heatmap_df.groupby(["월", "요일"], as_index=False)["일관객"]
+    .sum()
+    .rename(columns={"일관객": "일관객합계"})
+)
+
+# 요일 순서를 월요일 → 일요일로 고정
+monthly_weekday_total["요일"] = pd.Categorical(
+    monthly_weekday_total["요일"],
+    categories=weekday_names,
+    ordered=True,
+)
+
+monthly_weekday_total = (
+    monthly_weekday_total
+    .sort_values(["월", "요일"])
+)
+
+fig5 = px.density_heatmap(
+    monthly_weekday_total,
+    x="요일",
+    y="월",
+    z="일관객합계",
+    text_auto=".2s",
+    color_continuous_scale="Blues",
+    title="월 × 요일별 10위권 일관객 합계",
+    labels={
+        "요일": "요일",
+        "월": "월",
+        "일관객합계": "일관객 합계",
+    },
+)
+
+fig5.update_traces(
+    hovertemplate=(
+        "%{y}월 %{x}"
+        "<br>일관객 합계: %{z:,}명"
+        "<extra></extra>"
+    )
+)
+
+fig5.update_layout(
+    xaxis=dict(
+        categoryorder="array",
+        categoryarray=weekday_names,
+    ),
+    yaxis=dict(
+        tickmode="linear",
+        dtick=1,
+        autorange="reversed",
+    ),
+    xaxis_title="요일",
+    yaxis_title="월",
+    coloraxis_colorbar=dict(
+        title="일관객 합계",
+    ),
+)
+
+st.plotly_chart(
+    fig5,
+    use_container_width=True,
+)
+
+st.info(
+    "이 그래프로 알 수 있는 것: "
+    "어느 달의 어떤 요일에 영화관을 찾은 관객이 많았는지 한눈에 비교할 수 있습니다."
+)
+
+
+# ==================================================
+# 그래프 6. 앞으로 추가할 공간
+# ==================================================
+st.header("6. 다음 그래프")
 
 st.write(
     "추가 그래프를 위한 공간입니다."
@@ -331,6 +424,6 @@ st.write(
 
 st.info(
     "이 그래프로 알 수 있는 것: "
-    "여기에 다섯 번째 그래프에서 발견할 수 있는 내용을 적습니다."
+    "여기에 여섯 번째 그래프에서 발견할 수 있는 내용을 적습니다."
 )
 
