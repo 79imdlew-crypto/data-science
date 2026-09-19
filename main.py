@@ -1,212 +1,282 @@
-
-import re
-from datetime import date, timedelta
-
-import pandas as pd
-import requests
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="학교 급식 찾아보기", page_icon="🍱", layout="wide")
-
-API_KEY = "a002a61cc69e4a22a41f9c0b840f1341"
-SCHOOL_URL = "https://open.neis.go.kr/hub/schoolInfo"
-MEAL_URL = "https://open.neis.go.kr/hub/mealServiceDietInfo"
-
-SCHOOLS = ["도림고등학교", "아라고등학교", "논현고등학교"]
-
-
-def neis_get(url, params):
-    params = {
-        "KEY": API_KEY,
-        "Type": "json",
-        **params,
-    }
-    response = requests.get(url, params=params, timeout=15)
-    response.raise_for_status()
-    return response.json()
-
-
-@st.cache_data(ttl=3600)
-def find_school(school_name):
-    data = neis_get(
-        SCHOOL_URL,
-        {"SCHUL_NM": school_name, "pIndex": 1, "pSize": 5},
-    )
-    if "schoolInfo" not in data or len(data["schoolInfo"]) < 2:
-        return None
-
-    rows = data["schoolInfo"][1].get("row", [])
-    # 정확히 일치하는 학교명을 우선 사용
-    exact = [r for r in rows if r.get("SCHUL_NM") == school_name]
-    row = exact[0] if exact else (rows[0] if rows else None)
-    return row
-
-
-@st.cache_data(ttl=1800)
-def get_meals(atpt_code, school_code, from_ymd, to_ymd):
-    data = neis_get(
-        MEAL_URL,
-        {
-            "ATPT_OFCDC_SC_CODE": atpt_code,
-            "SD_SCHUL_CODE": school_code,
-            "MMEAL_SC_CODE": "2",
-            "MLSV_FROM_YMD": from_ymd,
-            "MLSV_TO_YMD": to_ymd,
-            "pSize": 1000,
-            "pIndex": 1,
-        },
-    )
-    if "mealServiceDietInfo" not in data or len(data["mealServiceDietInfo"]) < 2:
-        return pd.DataFrame()
-
-    rows = data["mealServiceDietInfo"][1].get("row", [])
-    return pd.DataFrame(rows)
-
-
-def parse_number(value):
-    if pd.isna(value):
-        return None
-    text = str(value).replace(",", "")
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
-    return float(match.group()) if match else None
-
-
-def parse_protein(cal_info):
-    # NEIS CAL_INFO는 보통 "탄수화물(g) 단백질(g) 지방(g) ... 칼로리(kcal)" 형식.
-    # 표준 표기에서 단백질 뒤 숫자를 추출한다.
-    if pd.isna(cal_info):
-        return None
-    text = str(cal_info)
-    match = re.search(r"단백질\s*\(?g\)?\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
-    if match:
-        return float(match.group(1))
-
-    # 일부 응답은 "단백질 : 00.0g"처럼 표기될 수 있다.
-    match = re.search(r"단백질[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*g", text, re.I)
-    return float(match.group(1)) if match else None
-
-
-def has_dessert(menu):
-    if pd.isna(menu):
-        return False
-    # 메뉴명에 후식/디저트 성격의 항목이 있는지 간단히 판별
-    keywords = [
-        "후식", "과일", "요구르트", "요거트", "주스", "음료", "푸딩",
-        "아이스크림", "젤리", "떡", "케이크", "쿠키", "빵", "마카롱",
-        "파이", "초코", "바나나", "사과", "배", "귤", "오렌지",
-        "포도", "수박", "참외", "키위", "딸기", "복숭아", "멜론",
-    ]
-    menu_lower = str(menu).lower()
-    return any(k.lower() in menu_lower for k in keywords)
-
-
-@st.cache_data(ttl=1800)
-def load_school_data():
-    today = date.today()
-    six_months_ago = today - timedelta(days=183)
-    from_ymd = six_months_ago.strftime("%Y%m%d")
-    to_ymd = today.strftime("%Y%m%d")
-
-    result = {}
-    for name in SCHOOLS:
-        info = find_school(name)
-        if not info:
-            result[name] = {"info": None, "meals": pd.DataFrame()}
-            continue
-
-        meals = get_meals(
-            info["ATPT_OFCDC_SC_CODE"],
-            info["SD_SCHUL_CODE"],
-            from_ymd,
-            to_ymd,
-        )
-        if not meals.empty:
-            meals["date"] = pd.to_datetime(meals["MLSV_YMD"], format="%Y%m%d", errors="coerce")
-            meals["calories"] = meals["CAL_INFO"].apply(parse_number)
-            meals["protein"] = meals["CAL_INFO"].apply(parse_protein)
-            meals["dessert"] = meals["DDISH_NM"].apply(has_dessert)
-        result[name] = {"info": info, "meals": meals}
-
-    return result, six_months_ago, today
-
-
-st.title("🍱 학교 급식 찾아보기")
-st.caption("나이스 교육정보 개방 포털의 중식 데이터를 이용합니다.")
-
-try:
-    data, start_date, end_date = load_school_data()
-except requests.RequestException as e:
-    st.error(f"나이스 API 요청 중 오류가 발생했습니다: {e}")
-    st.stop()
-except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
-    st.stop()
-
-st.info(
-    f"조회 기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} "
-    "(한국 시간 기준 오늘을 끝 날짜로 사용)"
+# ----------------------------------------
+# 기본 설정
+# ----------------------------------------
+st.set_page_config(
+    page_title="기온 예측기",
+    page_icon="🌡️",
+    layout="wide",
 )
 
-tabs = st.tabs(SCHOOLS)
+DATA_URL = (
+    "https://raw.githubusercontent.com/greatsong/modudata/"
+    "bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
+)
 
-for tab, school_name in zip(tabs, SCHOOLS):
-    with tab:
-        school = data[school_name]
-        info = school["info"]
-        df = school["meals"]
+BASE_YEAR = 1908
+LAST_DATA_YEAR = 2025
+MIN_OBSERVATIONS = 300
 
-        if not info:
-            st.warning("학교 기본정보를 찾지 못했습니다.")
-            continue
 
-        st.subheader(school_name)
-        st.write(
-            f"교육청: {info.get('ATPT_OFCDC_SC_CODE', '-')} · "
-            f"지역: {info.get('LCTN_SC_NM', '-')}"
+# ----------------------------------------
+# 데이터 불러오기
+# ----------------------------------------
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+
+    # 날짜를 날짜 형식으로 변환
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+
+    # 필요한 숫자 열을 숫자형으로 변환
+    df["평균기온"] = pd.to_numeric(df["평균기온"], errors="coerce")
+
+    # 날짜 또는 평균기온이 없는 행 제거
+    df = df.dropna(subset=["날짜", "평균기온"]).copy()
+
+    # 연도 추출
+    df["연도"] = df["날짜"].dt.year
+
+    return df
+
+
+# ----------------------------------------
+# 연도별 데이터 계산
+# ----------------------------------------
+@st.cache_data
+def make_yearly_data(df):
+    # 2025년까지의 데이터만 사용
+    df = df[df["연도"] <= LAST_DATA_YEAR].copy()
+
+    # 연도별 관측일 수와 평균기온 계산
+    yearly = (
+        df.groupby("연도")
+        .agg(
+            관측일수=("평균기온", "count"),
+            평균기온=("평균기온", "mean"),
         )
+        .reset_index()
+    )
 
-        if df.empty:
-            st.warning("조회 기간에 중식 데이터가 없습니다. (NEIS의 INFO-200일 수 있습니다.)")
-            continue
+    # 관측일이 300일 이상인 해만 사용
+    yearly = yearly[yearly["관측일수"] >= MIN_OBSERVATIONS].copy()
 
-        # 월별 평균
-        monthly = (
-            df.dropna(subset=["date"])
-            .assign(month=lambda x: x["date"].dt.to_period("M").astype(str))
-            .groupby("month", as_index=False)
-            .agg(
-                평균칼로리=("calories", "mean"),
-                평균단백질=("protein", "mean"),
-                후식제공일수=("dessert", "sum"),
-            )
-        )
+    # 회귀의 독립 변수: 1908년부터 지난 연수
+    yearly["지난연수"] = yearly["연도"] - BASE_YEAR
 
-        st.markdown("### 한달 평균 칼로리")
-        if monthly["평균칼로리"].notna().any():
-            chart_cal = monthly.set_index("month")[["평균칼로리"]]
-            st.line_chart(chart_cal, y="평균칼로리")
-        else:
-            st.warning("칼로리 값이 없어 그래프를 만들 수 없습니다.")
+    return yearly.sort_values("연도").reset_index(drop=True)
 
-        st.markdown("### 한달 평균 단백질 함유량")
-        if monthly["평균단백질"].notna().any():
-            chart_protein = monthly.set_index("month")[["평균단백질"]]
-            st.line_chart(chart_protein, y="평균단백질")
-        else:
-            st.warning(
-                "현재 응답의 CAL_INFO에서 단백질 수치를 확인하지 못했습니다. "
-                "나이스 응답 형식이 다른 경우 파싱 규칙을 조정해야 합니다."
-            )
 
-        st.markdown("### 후식 여부")
-        dessert_days = int(df["dessert"].sum())
-        total_days = len(df)
-        if dessert_days > 0:
-            st.success(f"후식으로 판단되는 메뉴가 나온 날이 있습니다. ({dessert_days}/{total_days}일)")
-        else:
-            st.info("조회된 메뉴에서 후식으로 판단되는 항목을 찾지 못했습니다.")
+df = load_data()
+yearly = make_yearly_data(df)
 
-        with st.expander("급식 원본 데이터 보기"):
-            show_cols = [c for c in ["MLSV_YMD", "DDISH_NM", "CAL_INFO"] if c in df.columns]
-            st.dataframe(df[show_cols], use_container_width=True)
 
+# ----------------------------------------
+# 회귀 계산
+# ----------------------------------------
+if len(yearly) < 2:
+    st.error("회귀 직선을 계산할 수 있는 연도 데이터가 충분하지 않습니다.")
+    st.stop()
+
+x = yearly["지난연수"].to_numpy()
+y = yearly["평균기온"].to_numpy()
+
+# y = slope * x + intercept
+slope, intercept = np.polyfit(x, y, 1)
+
+# 상관계수
+correlation = yearly["지난연수"].corr(yearly["평균기온"])
+
+
+def predict_temperature(year):
+    """주어진 연도의 회귀 예상 평균기온."""
+    elapsed_years = year - BASE_YEAR
+    return slope * elapsed_years + intercept
+
+
+# ----------------------------------------
+# 화면
+# ----------------------------------------
+st.title("🌡️ 기온 예측기")
+
+st.markdown(
+    """
+서울의 일별 평균기온 데이터를 이용해 연평균기온을 계산하고,
+연도와 평균기온의 선형 회귀를 이용해 기온을 예측합니다.
+"""
+)
+
+# 데이터 기준 안내
+st.info(
+    f"분석 기준: 2025년까지의 데이터 중 관측일수가 "
+    f"{MIN_OBSERVATIONS}일 이상인 연도만 사용"
+)
+
+# ----------------------------------------
+# 슬라이더
+# ----------------------------------------
+selected_year = st.slider(
+    "예측할 연도를 선택하세요",
+    min_value=1900,
+    max_value=2100,
+    value=2025,
+    step=1,
+    format="%d년",
+)
+
+predicted_temp = predict_temperature(selected_year)
+
+st.metric(
+    label=f"{selected_year}년 예상 평균기온",
+    value=f"{predicted_temp:.2f} °C",
+)
+
+# ----------------------------------------
+# 회귀 정보
+# ----------------------------------------
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("회귀에 사용한 연도 수", f"{len(yearly)}개")
+
+with col2:
+    st.metric("시작 연도", f"{yearly['연도'].min()}년")
+
+with col3:
+    st.metric("끝 연도", f"{yearly['연도'].max()}년")
+
+with col4:
+    st.metric("상관계수", f"{correlation:.3f}")
+
+
+# ----------------------------------------
+# 산점도 + 회귀 직선
+# ----------------------------------------
+
+# 그래프에서는 1900~2100년까지 회귀선을 표시
+line_years = np.arange(1900, 2101)
+line_temperatures = np.array(
+    [predict_temperature(year) for year in line_years]
+)
+
+fig = go.Figure()
+
+# 실제 연평균기온 산점도
+fig.add_trace(
+    go.Scatter(
+        x=yearly["연도"],
+        y=yearly["평균기온"],
+        mode="markers",
+        name="실제 연평균기온",
+        marker=dict(
+            size=7,
+            color="#1f77b4",
+            opacity=0.8,
+        ),
+        customdata=yearly["관측일수"],
+        hovertemplate=(
+            "<b>%{x}년</b><br>"
+            "평균기온: %{y:.2f} °C<br>"
+            "관측일수: %{customdata}일"
+            "<extra></extra>"
+        ),
+    )
+)
+
+# 회귀 직선
+fig.add_trace(
+    go.Scatter(
+        x=line_years,
+        y=line_temperatures,
+        mode="lines",
+        name="회귀 직선",
+        line=dict(
+            color="#e74c3c",
+            width=3,
+        ),
+        hovertemplate=(
+            "<b>%{x}년</b><br>"
+            "예상 평균기온: %{y:.2f} °C"
+            "<extra></extra>"
+        ),
+    )
+)
+
+# 선택한 연도의 예측값 표시
+fig.add_trace(
+    go.Scatter(
+        x=[selected_year],
+        y=[predicted_temp],
+        mode="markers",
+        name=f"{selected_year}년 예측",
+        marker=dict(
+            size=14,
+            color="#2ca02c",
+            line=dict(
+                color="white",
+                width=2,
+            ),
+        ),
+        hovertemplate=(
+            f"<b>{selected_year}년</b><br>"
+            f"예상 평균기온: {predicted_temp:.2f} °C"
+            "<extra></extra>"
+        ),
+    )
+)
+
+fig.update_layout(
+    title="서울 연평균기온과 선형 회귀",
+    xaxis_title="연도",
+    yaxis_title="평균기온 (°C)",
+    xaxis=dict(
+        # 가로축에 연도를 그대로 표시
+        tickmode="linear",
+        dtick=10,
+        range=[1900, 2100],
+    ),
+    hovermode="closest",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0,
+    ),
+    height=600,
+)
+
+st.plotly_chart(fig, width="stretch")
+
+
+# ----------------------------------------
+# 회귀식 및 데이터 설명
+# ----------------------------------------
+st.subheader("회귀식")
+
+st.code(
+    f"평균기온 = {slope:.6f} × (연도 - {BASE_YEAR}) + {intercept:.6f}"
+)
+
+st.caption(
+    f"독립 변수는 '{BASE_YEAR}년부터 지난 연수'이며, "
+    f"{yearly['연도'].min()}~{yearly['연도'].max()}년의 "
+    f"연평균기온을 이용해 회귀 직선을 계산했습니다."
+)
+
+# ----------------------------------------
+# 사용된 연도별 데이터
+# ----------------------------------------
+with st.expander("회귀에 사용된 연도별 데이터 보기"):
+    display_df = yearly.copy()
+    display_df["평균기온"] = display_df["평균기온"].round(2)
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+    )
