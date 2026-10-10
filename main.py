@@ -38,32 +38,7 @@ COLUMNS = [
 
 
 # ==========================================
-# 3. 사이드바 메뉴
-# ==========================================
-with st.sidebar:
-    st.title("🧠 뇌졸중 예측 실습실")
-    st.markdown("---")
-
-    st.subheader("📂 페이지 메뉴")
-
-    st.page_link(
-        "main.py",
-        label="데이터 소개",
-        icon="🏠",
-    )
-
-    st.page_link(
-        "pages/1_탐색.py",
-        label="탐색",
-        icon="🔎",
-    )
-
-    st.markdown("---")
-    st.caption("건강 데이터 분석 학습용 앱")
-
-
-# ==========================================
-# 4. 데이터 불러오기
+# 3. 데이터 불러오기
 # ==========================================
 @st.cache_data
 def load_data():
@@ -84,7 +59,7 @@ def load_data():
 
 
 # ==========================================
-# 5. 제목 및 소개
+# 4. 제목 및 소개
 # ==========================================
 st.title("🧠 뇌졸중 예측 실습실")
 
@@ -95,7 +70,7 @@ st.markdown(
     이 앱에서는 사람들의 건강 정보와 생활 습관이 담긴 데이터를
     살펴보고, 데이터 분석과 뇌졸중 예측을 위한 기초를 학습합니다.
 
-    왼쪽 사이드바의 **탐색** 메뉴를 선택하면 그래프와 표를 통해
+    왼쪽 사이드바에서 **탐색** 페이지를 선택하면 그래프와 표를 통해
     데이터의 특징을 자세히 살펴볼 수 있습니다.
     """
 )
@@ -104,7 +79,7 @@ st.divider()
 
 
 # ==========================================
-# 6. 데이터 불러오기 및 오류 처리
+# 5. 데이터 불러오기 및 오류 처리
 # ==========================================
 try:
     df = load_data()
@@ -118,7 +93,7 @@ except Exception as error:
 
 
 # ==========================================
-# 7. 요약 숫자 카드
+# 6. 요약 숫자 카드
 # ==========================================
 total_people = len(df)
 total_columns = len(df.columns)
@@ -141,23 +116,23 @@ st.subheader("📊 데이터 한눈에 보기")
 col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
-    "전체 사람 수",
-    f"{total_people:,}명",
+    label="전체 사람 수",
+    value=f"{total_people:,}명",
 )
 
 col2.metric(
-    "열 개수",
-    f"{total_columns:,}개",
+    label="열 개수",
+    value=f"{total_columns:,}개",
 )
 
 col3.metric(
-    "stroke가 1인 사람 수",
-    f"{stroke_count:,}명",
+    label="stroke가 1인 사람 수",
+    value=f"{stroke_count:,}명",
 )
 
 col4.metric(
-    "stroke가 1인 비율",
-    f"{stroke_rate:.2f}%",
+    label="stroke가 1인 비율",
+    value=f"{stroke_rate:.2f}%",
 )
 
 st.caption(
@@ -168,19 +143,20 @@ st.divider()
 
 
 # ==========================================
-# 8. 열 이름과 데이터 정보
+# 7. 열 이름과 데이터 정보
 # ==========================================
 st.subheader("📋 열 이름과 데이터 정보")
 
 st.markdown(
     """
     **우리말 뜻** 열의 셀을 클릭해 내용을 직접 입력하거나 수정하세요.
-    나머지 열은 편집할 수 없습니다.
+    다른 열은 편집할 수 없습니다.
     """
 )
 
 
 def get_value_types(series):
+    """열에 포함된 값의 종류를 요약한다."""
     unique_values = series.dropna().unique()
 
     if pd.api.types.is_numeric_dtype(series):
@@ -244,6 +220,11 @@ edited_column_info = st.data_editor(
     key="column_info_editor",
 )
 
+st.caption(
+    "수정한 내용은 현재 앱 세션에서 유지됩니다. "
+    "다운로드 버튼을 눌러 파일로 따로 보관할 수 있습니다."
+)
+
 st.download_button(
     label="📥 수정한 열 설명 다운로드",
     data=edited_column_info.to_csv(
@@ -253,18 +234,17 @@ st.download_button(
     mime="text/csv",
 )
 
-st.caption(
-    "수정한 내용은 현재 앱 세션에 반영됩니다. "
-    "다운로드한 CSV 파일로 별도 보관할 수 있습니다."
-)
-
 st.divider()
 
 
 # ==========================================
-# 9. 원본 데이터 첫 다섯 행
+# 8. 원본 데이터 첫 다섯 행
 # ==========================================
 st.subheader("🔎 원본 데이터 미리 보기")
+
+st.markdown(
+    "데이터가 실제로 어떻게 기록되어 있는지 처음 다섯 행을 확인합니다."
+)
 
 st.dataframe(
     df.head(5),
@@ -281,14 +261,18 @@ st.divider()
 
 
 # ==========================================
-# 10. 데이터 출처
+# 9. 데이터 출처
 # ==========================================
 st.subheader("📚 데이터 출처")
+
+st.markdown(
+    "교재에 제시된 데이터 출처와 참고 자료를 입력하세요."
+)
 
 st.text_area(
     "데이터 출처 및 참고 자료",
     value="",
-    placeholder="교재를 참고해 데이터 출처와 참고 문헌을 입력하세요.",
+    placeholder="데이터 출처, 제공 기관, 참고 문헌 등을 입력하세요.",
     height=120,
     key="data_source",
 )
