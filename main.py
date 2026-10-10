@@ -39,7 +39,6 @@ COLUMNS = [
 def load_data():
     df = pd.read_csv(DATA_URL, encoding="utf-8")
 
-    # 열 이름 확인
     missing_columns = [
         column for column in COLUMNS
         if column not in df.columns
@@ -51,10 +50,7 @@ def load_data():
             + ", ".join(missing_columns)
         )
 
-    # 지정된 열 순서 유지
-    df = df[COLUMNS].copy()
-
-    return df
+    return df[COLUMNS].copy()
 
 
 # ==========================================
@@ -82,9 +78,7 @@ try:
 
 except Exception as error:
     st.error(f"데이터를 불러오지 못했습니다: {error}")
-    st.info(
-        "인터넷 연결과 CSV 주소, 파일의 열 이름을 확인해 주세요."
-    )
+    st.info("인터넷 연결과 CSV 주소, 파일의 열 이름을 확인해 주세요.")
     st.stop()
 
 
@@ -94,9 +88,10 @@ except Exception as error:
 total_people = len(df)
 total_columns = len(df.columns)
 
-stroke_count = int(
-    (pd.to_numeric(df["stroke"], errors="coerce") == 1).sum()
+stroke_values = pd.to_numeric(
+    df["stroke"], errors="coerce"
 )
+stroke_count = int((stroke_values == 1).sum())
 
 stroke_rate = (
     stroke_count / total_people * 100
@@ -108,25 +103,10 @@ st.subheader("📊 데이터 한눈에 보기")
 
 card1, card2, card3, card4 = st.columns(4)
 
-card1.metric(
-    label="전체 사람 수",
-    value=f"{total_people:,}명",
-)
-
-card2.metric(
-    label="열 개수",
-    value=f"{total_columns:,}개",
-)
-
-card3.metric(
-    label="stroke가 1인 사람 수",
-    value=f"{stroke_count:,}명",
-)
-
-card4.metric(
-    label="stroke가 1인 비율",
-    value=f"{stroke_rate:.2f}%",
-)
+card1.metric("전체 사람 수", f"{total_people:,}명")
+card2.metric("열 개수", f"{total_columns:,}개")
+card3.metric("stroke가 1인 사람 수", f"{stroke_count:,}명")
+card4.metric("stroke가 1인 비율", f"{stroke_rate:.2f}%")
 
 st.caption(
     "stroke가 1인 비율은 전체 행 중 stroke 값이 1인 행의 비율입니다."
@@ -142,24 +122,27 @@ st.subheader("📋 열 이름과 데이터 정보")
 
 st.markdown(
     """
-    각 열에 어떤 정보가 들어 있는지 살펴보세요.
-    **우리말 뜻** 칸은 교재를 참고해 직접 채울 수 있도록 비워 두었습니다.
+    **우리말 뜻** 열의 셀을 클릭해 내용을 직접 입력하거나 수정하세요.
+    다른 열은 편집할 수 없도록 설정되어 있습니다.
     """
 )
 
-# 값의 종류를 확인하는 함수
+
 def get_value_types(series):
+    """실제 데이터에 나타나는 값의 종류를 설명한다."""
     unique_values = series.dropna().unique()
 
-    # 수치형 열
     if pd.api.types.is_numeric_dtype(series):
         if len(unique_values) <= 10:
-            values = sorted(unique_values.tolist())
+            try:
+                values = sorted(unique_values.tolist())
+            except TypeError:
+                values = unique_values.tolist()
+
             return ", ".join(str(value) for value in values)
 
         return f"수치형 ({len(unique_values):,}개 고유값)"
 
-    # 문자형 열
     values = sorted(str(value) for value in unique_values)
 
     if len(values) <= 10:
@@ -181,11 +164,14 @@ column_info = pd.DataFrame({
     ],
 })
 
-st.dataframe(
+# 우리말 뜻을 편집할 수 있는 표
+edited_column_info = st.data_editor(
     column_info,
     use_container_width=True,
     hide_index=True,
     height=470,
+    num_rows="fixed",
+    disabled=["열 이름", "값의 종류", "빈 값 개수"],
     column_config={
         "열 이름": st.column_config.TextColumn(
             "열 이름",
@@ -193,7 +179,8 @@ st.dataframe(
         ),
         "우리말 뜻": st.column_config.TextColumn(
             "우리말 뜻",
-            help="교재를 참고해 직접 작성할 수 있는 빈 칸",
+            help="셀을 클릭해 우리말 뜻을 입력하거나 수정하세요.",
+            default="",
         ),
         "값의 종류": st.column_config.TextColumn(
             "값의 종류",
@@ -203,11 +190,22 @@ st.dataframe(
             format="%d",
         ),
     },
+    key="column_info_editor",
 )
 
 st.caption(
-    "빈 값 개수는 pandas에서 결측값으로 인식한 셀의 수입니다. "
-    "값의 종류는 실제 데이터에 나타나는 값 또는 고유값 개수를 나타냅니다."
+    "표에서 수정한 내용은 현재 앱 세션에 반영됩니다. "
+    "CSV 원본 데이터 자체는 변경되지 않습니다."
+)
+
+# 수정한 우리말 뜻을 별도 CSV로 다운로드할 수 있도록 제공
+st.download_button(
+    label="📥 수정한 열 설명 다운로드",
+    data=edited_column_info.to_csv(
+        index=False
+    ).encode("utf-8-sig"),
+    file_name="열_설명.csv",
+    mime="text/csv",
 )
 
 st.divider()
@@ -230,7 +228,7 @@ st.dataframe(
 
 st.caption(
     "원본의 처음 다섯 행을 표시합니다. "
-    "이 화면에서는 결측값을 임의로 채우거나 행을 삭제하지 않습니다."
+    "결측값을 임의로 채우거나 행을 삭제하지 않습니다."
 )
 
 st.divider()
@@ -248,7 +246,10 @@ st.markdown(
 source_text = st.text_area(
     "데이터 출처 및 참고 자료",
     value="",
-    placeholder="교재를 참고해 데이터 출처, 제공 기관, 참고 문헌 등을 입력하세요.",
+    placeholder=(
+        "교재를 참고해 데이터 출처, 제공 기관, "
+        "참고 문헌 등을 입력하세요."
+    ),
     height=120,
     key="data_source",
 )
