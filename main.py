@@ -1,46 +1,4 @@
-import streamlit as st
-import pandas as pd
-
-
-# ==========================================
-# 1. 페이지 기본 설정
-# ==========================================
-st.set_page_config(
-    page_title="뇌졸중 예측 실습실",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-
-# ==========================================
-# 2. 데이터 주소와 열 이름
-# ==========================================
-DATA_URL = (
-    "https://raw.githubusercontent.com/"
-    "greatsong/modudata/main/data/stroke.csv"
-)
-
-COLUMNS = [
-    "id",
-    "gender",
-    "age",
-    "hypertension",
-    "heart_disease",
-    "ever_married",
-    "work_type",
-    "Residence_type",
-    "avg_glucose_level",
-    "bmi",
-    "smoking_status",
-    "stroke",
-]
-
-
-# ==========================================
-# 3. 데이터 불러오기
-# ==========================================
-@st.cache_datafrom pathlib import Path
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -282,7 +240,7 @@ def show_home():
 
 
 # ==========================================
-# 7. 페이지 파일 확인
+# 7. 페이지 파일 존재 여부 확인
 # ==========================================
 missing_pages = []
 
@@ -294,20 +252,22 @@ if not MODEL_PAGE_PATH.is_file():
 
 if missing_pages:
     st.error("페이지 파일을 찾을 수 없습니다.")
+
     st.write("다음 파일을 확인해 주세요:")
 
     for missing_page in missing_pages:
         st.code(missing_page)
 
     st.info(
-        "GitHub 저장소에서 파일 이름과 대소문자, "
-        "폴더 위치를 확인한 뒤 다시 배포하세요."
+        "GitHub 저장소에서 파일 이름과 폴더 위치를 확인하고 "
+        "변경 사항을 커밋한 다음 다시 배포해 주세요."
     )
+
     st.stop()
 
 
 # ==========================================
-# 8. 사이드바 메뉴 등록
+# 8. 사이드바 페이지 등록
 # ==========================================
 home_page = st.Page(
     show_home,
@@ -341,3 +301,13 @@ navigation = st.navigation(
 )
 
 navigation.run()
+저장 후 확인할 사항
+기존 main.py의 내용을 전부 삭제한 뒤 위 코드를 처음부터 끝까지 붙여 넣습니다.
+
+main.py 파일 맨 위가 반드시 다음처럼 시작하는지 확인합니다.
+
+python
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
