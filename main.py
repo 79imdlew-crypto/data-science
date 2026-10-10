@@ -3,28 +3,8 @@ import pandas as pd
 
 
 # ==========================================
-# 1. 페이지 등록 및 사이드바 메뉴
+# 1. 페이지 기본 설정
 # ==========================================
-home_page = st.Page(
-    "main.py",
-    title="데이터 소개",
-    icon="🏠",
-    default=True,
-)
-
-explore_page = st.Page(
-    "pages/1_탐색.py",
-    title="탐색",
-    icon="🔎",
-)
-
-page = st.navigation(
-    [home_page, explore_page],
-    position="sidebar",
-    expanded=True,
-)
-
-# 페이지 공통 설정
 st.set_page_config(
     page_title="뇌졸중 예측 실습실",
     page_icon="🧠",
@@ -32,13 +12,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 선택된 페이지 실행
-# 아래 코드는 반드시 페이지 본문보다 먼저 실행해야 합니다.
-# 단, 홈페이지 내용은 아래에서 실행하므로 별도 함수로 구성합니다.
-
 
 # ==========================================
-# 2. 데이터 주소 및 열 이름
+# 2. 데이터 주소와 열 이름
 # ==========================================
 DATA_URL = (
     "https://raw.githubusercontent.com/"
@@ -83,23 +59,23 @@ def load_data():
 
 
 # ==========================================
-# 4. 값의 종류 요약
+# 4. 열의 값 종류 요약
 # ==========================================
 def get_value_types(series):
-    unique_values = series.dropna().unique()
+    values = series.dropna().unique()
 
     if pd.api.types.is_numeric_dtype(series):
-        if len(unique_values) <= 10:
+        if len(values) <= 10:
             try:
-                values = sorted(unique_values.tolist())
+                values = sorted(values.tolist())
             except TypeError:
-                values = unique_values.tolist()
+                values = values.tolist()
 
             return ", ".join(str(value) for value in values)
 
-        return f"수치형 ({len(unique_values):,}개 고유값)"
+        return f"수치형 ({len(values):,}개 고유값)"
 
-    values = sorted(str(value) for value in unique_values)
+    values = sorted(str(value) for value in values)
 
     if len(values) <= 10:
         return ", ".join(values)
@@ -108,33 +84,32 @@ def get_value_types(series):
 
 
 # ==========================================
-# 5. 데이터 소개 화면
+# 5. 데이터 소개 페이지
 # ==========================================
 def show_home():
     st.title("🧠 뇌졸중 예측 실습실")
 
     st.markdown(
         """
-        뇌졸중 예측 실습실에 오신 것을 환영합니다!
+        이 실습실에서는 사람들의 건강 정보와 생활 습관이 담긴
+        데이터를 살펴보고, 뇌졸중 예측을 위한 기초를 학습합니다.
 
-        이 앱에서는 사람들의 건강 정보와 생활 습관이 담긴 데이터를
-        살펴보고, 데이터 분석과 뇌졸중 예측을 위한 기초를 학습합니다.
-
-        왼쪽 사이드바의 **탐색** 메뉴를 선택하면 그래프와 표를 통해
-        데이터의 특징을 자세히 살펴볼 수 있습니다.
+        왼쪽 사이드바에서 **탐색** 또는 **분류 모델**을 선택해 보세요.
         """
     )
-
-    st.divider()
 
     try:
         df = load_data()
     except Exception as error:
         st.error(f"데이터를 불러오지 못했습니다: {error}")
-        st.info("인터넷 연결, CSV 주소, 열 이름을 확인해 주세요.")
         st.stop()
 
+    # --------------------------------------
     # 요약 카드
+    # --------------------------------------
+    st.divider()
+    st.subheader("📊 데이터 한눈에 보기")
+
     total_people = len(df)
     total_columns = len(df.columns)
 
@@ -142,6 +117,7 @@ def show_home():
         df["stroke"],
         errors="coerce",
     )
+
     stroke_count = int((stroke_values == 1).sum())
 
     stroke_rate = (
@@ -150,29 +126,40 @@ def show_home():
         else 0
     )
 
-    st.subheader("📊 데이터 한눈에 보기")
-
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("전체 사람 수", f"{total_people:,}명")
-    col2.metric("열 개수", f"{total_columns:,}개")
-    col3.metric("stroke가 1인 사람 수", f"{stroke_count:,}명")
-    col4.metric("stroke가 1인 비율", f"{stroke_rate:.2f}%")
-
-    st.caption(
-        "stroke가 1인 비율은 전체 행 중 stroke 값이 1인 행의 비율입니다."
+    col1.metric(
+        "전체 사람 수",
+        f"{total_people:,}명",
     )
 
-    st.divider()
+    col2.metric(
+        "열 개수",
+        f"{total_columns:,}개",
+    )
 
+    col3.metric(
+        "stroke가 1인 사람 수",
+        f"{stroke_count:,}명",
+    )
+
+    col4.metric(
+        "stroke가 1인 비율",
+        f"{stroke_rate:.2f}%",
+    )
+
+    st.caption(
+        "stroke가 1인 비율은 전체 데이터 중 뇌졸중으로 기록된 사람의 비율입니다."
+    )
+
+    # --------------------------------------
     # 열 설명 표
+    # --------------------------------------
+    st.divider()
     st.subheader("📋 열 이름과 데이터 정보")
 
-    st.markdown(
-        """
-        **우리말 뜻** 열을 클릭해 교재에 나온 설명을 입력하세요.
-        나머지 열은 수정할 수 없습니다.
-        """
+    st.write(
+        "우리말 뜻 열을 클릭해 교재에 나온 설명을 입력하거나 수정하세요."
     )
 
     column_info = pd.DataFrame({
@@ -188,19 +175,27 @@ def show_home():
         ],
     })
 
-    edited_column_info = st.data_editor(
+    edited_info = st.data_editor(
         column_info,
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
-        disabled=["열 이름", "값의 종류", "빈 값 개수"],
+        disabled=[
+            "열 이름",
+            "값의 종류",
+            "빈 값 개수",
+        ],
         column_config={
-            "열 이름": st.column_config.TextColumn("열 이름"),
+            "열 이름": st.column_config.TextColumn(
+                "열 이름",
+            ),
             "우리말 뜻": st.column_config.TextColumn(
                 "우리말 뜻",
-                help="셀을 클릭해 뜻을 입력하거나 수정하세요.",
+                help="교재를 참고해 우리말 뜻을 입력하세요.",
             ),
-            "값의 종류": st.column_config.TextColumn("값의 종류"),
+            "값의 종류": st.column_config.TextColumn(
+                "값의 종류",
+            ),
             "빈 값 개수": st.column_config.NumberColumn(
                 "빈 값 개수",
                 format="%d",
@@ -211,21 +206,21 @@ def show_home():
 
     st.download_button(
         label="📥 수정한 열 설명 다운로드",
-        data=edited_column_info.to_csv(
-            index=False
+        data=edited_info.to_csv(
+            index=False,
         ).encode("utf-8-sig"),
         file_name="열_설명.csv",
         mime="text/csv",
     )
 
     st.caption(
-        "수정 내용은 현재 앱 세션에 유지됩니다. "
-        "다운로드한 CSV 파일로 별도 보관할 수 있습니다."
+        "입력한 설명을 CSV 파일로 내려받아 보관할 수 있습니다."
     )
 
-    st.divider()
-
+    # --------------------------------------
     # 원본 데이터 미리 보기
+    # --------------------------------------
+    st.divider()
     st.subheader("🔎 원본 데이터 미리 보기")
 
     st.dataframe(
@@ -236,29 +231,55 @@ def show_home():
 
     st.caption("원본 데이터의 처음 다섯 행입니다.")
 
-    st.divider()
-
+    # --------------------------------------
     # 데이터 출처
+    # --------------------------------------
+    st.divider()
     st.subheader("📚 데이터 출처")
 
     st.text_area(
         "데이터 출처 및 참고 자료",
         value="",
-        placeholder="교재의 데이터 출처와 참고 문헌을 입력하세요.",
+        placeholder="교재에 나온 데이터 출처와 참고 문헌을 입력하세요.",
         height=120,
         key="data_source",
     )
 
-    st.caption(
-        "데이터 파일: "
-        "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
-    )
+    st.caption(f"데이터 파일 주소: {DATA_URL}")
 
 
 # ==========================================
-# 6. 선택된 페이지 실행
+# 6. 사이드바 페이지 등록
 # ==========================================
-if page == home_page:
-    show_home()
-else:
-    page.run()
+home_page = st.Page(
+    show_home,
+    title="데이터 소개",
+    icon="🏠",
+    default=True,
+)
+
+explore_page = st.Page(
+    "pages/1_탐색.py",
+    title="탐색",
+    icon="🔎",
+)
+
+model_page = st.Page(
+    "pages/2_분류_모델.py",
+    title="분류 모델",
+    icon="🌳",
+)
+
+navigation = st.navigation(
+    {
+        "실습 메뉴": [
+            home_page,
+            explore_page,
+            model_page,
+        ]
+    },
+    position="sidebar",
+    expanded=True,
+)
+
+navigation.run()
