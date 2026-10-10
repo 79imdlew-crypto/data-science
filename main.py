@@ -10,7 +10,24 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide",
 )
+st.set_page_config(
+    page_title="뇌졸중 예측 실습실",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ==========================================
 # 2. 데이터 주소 및 열 이름
