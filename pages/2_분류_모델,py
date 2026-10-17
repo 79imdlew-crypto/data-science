@@ -1,588 +1,129 @@
-import streamlit as st
+pages/2_분류_모델.py# pages/2_분류_모델.py — 속성을 골라 두 모델을 학습하고, 두 축으로 자른 자리를 그림으로 본다
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
+import streamlit as st
 from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier, export_text
+
+st.set_page_config(page_title="분류 모델", page_icon="🤖", layout="wide")
+st.title("🤖 분류 모델")
+st.write("뇌졸중을 겪었는지 아닌지를 맞히는 모델 두 개를 만들고, 채점용 사람들로 정확도를 봅니다.")
+
+데이터주소 = "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
+고를수있는열 = ["age", "avg_glucose_level", "bmi", "hypertension", "heart_disease"]
+기본열 = ["age", "avg_glucose_level", "hypertension", "heart_disease"]
+입력이름 = {"age": "나이", "avg_glucose_level": "평균 혈당", "bmi": "체질량지수",
+            "hypertension": "고혈압", "heart_disease": "심장병"}
+칸수 = 60
+칸색 = ["#e2e8f0", "#fef3c7", "#dbeafe", "#dcfce7", "#fae8ff", "#ffe4e6", "#ede9fe", "#f8fafc"]
 
 
-# ==================================================
-# 1. 페이지 설정
-# ==================================================
-st.set_page_config(
-    page_title="분류 모델 | 뇌졸중 예측 실습실",
-    page_icon="🌳",
-    layout="wide",
-)
-
-DATA_URL = (
-    "https://raw.githubusercontent.com/"
-    "greatsong/modudata/main/data/stroke.csv"
-)
-
-FEATURES = [
-    "age",
-    "avg_glucose_level",
-    "bmi",
-    "hypertension",
-    "heart_disease",
-]
-
-FEATURE_LABELS = {
-    "age": "나이",
-    "avg_glucose_level": "평균 혈당",
-    "bmi": "BMI",
-    "hypertension": "고혈압",
-    "heart_disease": "심장병",
-}
-
-
-# ==================================================
-# 2. 데이터 불러오기
-# ==================================================
 @st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_URL, encoding="utf-8")
-
-    required = ["id", "stroke"] + FEATURES
-    missing = [c for c in required if c not in df.columns]
-
-    if missing:
-        raise ValueError(
-            "필요한 열이 없습니다: " + ", ".join(missing)
-        )
-
-    for column in required:
-        df[column] = pd.to_numeric(
-            df[column],
-            errors="coerce",
-        )
-
-    df = df.dropna(subset=["id", "stroke"]).copy()
-    df = df[df["stroke"].isin([0, 1])].copy()
-
-    # ID 순으로 정렬
-    df = df.sort_values(
-        "id",
-        kind="mergesort",
-    ).reset_index(drop=True)
-
-    return df
+def 데이터_읽기():
+    """번호 순으로 정렬해 둔다. 나누는 자리가 늘 같아야 점수를 비교할 수 있다."""
+    return pd.read_csv(데이터주소, encoding="utf-8").sort_values("id").reset_index(drop=True)
 
 
-st.title("🌳 뇌졸중 예측 실습실: 분류 모델")
+def 우리말(열):
+    return 입력이름[열]
 
-st.markdown(
-    """
-    확률 모델과 질문 모델을 학습하고, 채점용 데이터로 정확도를 비교합니다.
 
-    - **확률 모델:** 로지스틱 회귀
-    - **질문 모델:** 결정 트리
-    - **기준 모델:** 훈련 데이터에서 많은 쪽의 클래스만 예측
-
-    `stroke = 1`은 **뇌졸중(양성)**,
-    `stroke = 0`은 **뇌졸중 아님(음성)**입니다.
-    """
-)
-
-try:
-    df = load_data()
-except Exception as error:
-    st.error(f"데이터를 불러오지 못했습니다: {error}")
+df = 데이터_읽기()
+고른열 = st.multiselect("입력으로 사용할 속성", 고를수있는열, default=기본열, format_func=우리말)
+입력열 = [열 for 열 in 고를수있는열 if 열 in 고른열]   # 고른 차례와 상관없이 늘 같은 순서로 둔다
+if len(입력열) < 2:
+    st.warning("속성을 두 개 이상 골라 주세요. 하나만으로는 그림의 두 축을 만들 수 없습니다.")
     st.stop()
 
-if len(df) < 5:
-    st.error("학습과 채점을 위해 유효한 데이터가 최소 5행 필요합니다.")
-    st.stop()
-
-
-# ==================================================
-# 3. 입력 속성 선택
-# ==================================================
-st.header("1. 입력 속성 선택")
-
-selected_features = st.multiselect(
-    "모델에 사용할 속성을 선택하세요.",
-    options=FEATURES,
-    default=[
-        "age",
-        "avg_glucose_level",
-        "hypertension",
-        "heart_disease",
-    ],
-    format_func=lambda x: FEATURE_LABELS[x],
-    key="model_features",
-)
-
-if len(selected_features) < 2:
-    st.warning("입력 속성을 두 개 이상 선택해 주세요.")
-    st.stop()
-
-st.caption(
-    "BMI는 선택한 경우에만 모델에 포함됩니다. "
-    "결측값은 훈련용 데이터의 중앙값으로 채웁니다."
-)
-
-
-# ==================================================
-# 4. 훈련용과 채점용 분리
-# ==================================================
-st.header("2. 데이터 나누기")
-
-# ID 오름차순 첫 세 명은 채점용으로 고정
-test_df = df.iloc[:3].copy()
-train_df = df.iloc[3:].copy()
-
-if len(train_df) < 2:
-    st.warning("훈련용 데이터가 부족합니다.")
-    st.stop()
-
-X_train = train_df[selected_features].copy()
-X_test = test_df[selected_features].copy()
-
-y_train = train_df["stroke"].astype(int)
-y_test = test_df["stroke"].astype(int)
-
-st.write(
-    f"훈련용: **{len(train_df):,}명** · "
-    f"채점용: **{len(test_df):,}명**"
-)
-
-st.caption(
-    "ID 순으로 정렬한 후 첫 세 명을 채점용으로 고정했습니다. "
-    "나머지 데이터만 학습에 사용합니다."
-)
-
-
-# ==================================================
-# 5. 모델 학습
-# ==================================================
-st.header("3. 세 가지 모델 학습")
-
-# 확률 모델: 중앙값 대체와 표준화는 훈련용 데이터로만 학습
-probability_model = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler()),
-    ("classifier", LogisticRegression(
-        max_iter=2000,
-        random_state=42,
-    )),
-])
-
-probability_model.fit(X_train, y_train)
-
-# 질문 모델: 최대 깊이 3, 마지막 마디 최소 5명
-question_model = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("classifier", DecisionTreeClassifier(
-        max_depth=3,
-        min_samples_leaf=5,
-        random_state=42,
-    )),
-])
-
-question_model.fit(X_train, y_train)
-
-# 기준 모델: 훈련용에서 더 많은 클래스만 예측
-majority_class = int(y_train.value_counts().idxmax())
-
-baseline_predictions = np.full(
-    len(y_test),
-    majority_class,
-    dtype=int,
-)
-
-probability_predictions = probability_model.predict(X_test)
-question_predictions = question_model.predict(X_test)
-
-probability_accuracy = accuracy_score(
-    y_test,
-    probability_predictions,
-)
-
-question_accuracy = accuracy_score(
-    y_test,
-    question_predictions,
-)
-
-baseline_accuracy = accuracy_score(
-    y_test,
-    baseline_predictions,
-)
-
-
-# ==================================================
-# 6. 정확도 카드
-# ==================================================
-st.header("4. 채점용 데이터 정확도")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "확률 모델 · 로지스틱 회귀",
-    f"{probability_accuracy:.1%}",
-)
-
-col2.metric(
-    "질문 모델 · 결정 트리",
-    f"{question_accuracy:.1%}",
-)
-
-baseline_label = (
-    "뇌졸중(양성)"
-    if majority_class == 1
-    else "뇌졸중 아님(음성)"
-)
-
-col3.metric(
-    "기준 모델 · 다수 클래스",
-    f"{baseline_accuracy:.1%}",
-)
-
-st.caption(
-    f"기준 모델은 훈련용에서 더 많았던 "
-    f"**{baseline_label}**만 예측합니다."
-)
-
-st.warning(
-    "채점용 데이터는 세 명뿐입니다. 한 명의 예측 결과에 따라 "
-    "정확도가 33.3%p씩 바뀌므로, 결과는 실습용으로 해석하세요."
-)
-
-
-# ==================================================
-# 7. 채점 결과 표
-# ==================================================
-st.subheader("채점용 세 사람의 예측 결과")
-
-classes = list(
-    probability_model.named_steps["classifier"].classes_
-)
-positive_index = classes.index(1)
-
-stroke_probabilities = probability_model.predict_proba(
-    X_test
-)[:, positive_index]
-
-result_df = pd.DataFrame({
-    "id": test_df["id"].astype(int).values,
-    "실제 결과": y_test.map({
-        0: "뇌졸중 아님",
-        1: "뇌졸중",
-    }).values,
-    "확률 모델 예측": pd.Series(
-        probability_predictions
-    ).map({
-        0: "뇌졸중 아님",
-        1: "뇌졸중",
-    }).values,
-    "뇌졸중 확률": [
-        f"{p:.1%}" for p in stroke_probabilities
-    ],
-    "질문 모델 예측": pd.Series(
-        question_predictions
-    ).map({
-        0: "뇌졸중 아님",
-        1: "뇌졸중",
-    }).values,
-    "기준 모델 예측": pd.Series(
-        baseline_predictions
-    ).map({
-        0: "뇌졸중 아님",
-        1: "뇌졸중",
-    }).values,
-})
-
-st.dataframe(
-    result_df,
-    use_container_width=True,
-    hide_index=True,
-)
-
-
-# ==================================================
-# 8. 결정 트리의 질문 순서
-# ==================================================
-st.header("5. 결정 트리의 질문 순서")
-
-tree = question_model.named_steps["classifier"]
-tree_structure = tree.tree_
-
-
-def get_tree_questions(tree_model, feature_names):
-    structure = tree_model.tree_
-    questions = []
-
-    def walk(node, depth, path):
-        feature_index = structure.feature[node]
-
-        if feature_index < 0:
-            return
-
-        feature = feature_names[feature_index]
-        threshold = structure.threshold[node]
-
-        questions.append(
-            f"{len(questions) + 1}. "
-            f"{'　' * depth}{' → '.join(path)}"
-            f"{' → ' if path else ''}"
-            f"{FEATURE_LABELS[feature]} ≤ {threshold:.3f} 인가?"
-        )
-
-        if depth < 2:
-            walk(
-                structure.children_left[node],
-                depth + 1,
-                path + [f"{FEATURE_LABELS[feature]} ≤ {threshold:.3f}"],
-            )
-            walk(
-                structure.children_right[node],
-                depth + 1,
-                path + [f"{FEATURE_LABELS[feature]} > {threshold:.3f}"],
-            )
-
-    walk(0, 0, [])
-    return questions
-
-
-questions = get_tree_questions(
-    tree,
-    selected_features,
-)
-
-if questions:
-    for question in questions:
-        st.write(question)
-else:
-    st.info(
-        "현재 훈련 데이터에서는 추가 질문이 만들어지지 않았습니다."
-    )
-
-st.caption(
-    "결정 트리는 최대 깊이 3으로 제한했습니다. "
-    "각 경로에서 질문을 세 번까지만 합니다."
-)
-
-
-# ==================================================
-# 9. 두 속성으로 결정 경계 시각화
-# ==================================================
-st.header("6. 두 속성으로 분류 경계 살펴보기")
-
-st.markdown(
-    """
-    아래에서는 선택한 두 속성만 사용해 모델을 다시 학습합니다.
-    점은 채점용 사람이며, 점의 색은 실제 뇌졸중 여부를 나타냅니다.
-    """
-)
-
-axis_col1, axis_col2 = st.columns(2)
-
-with axis_col1:
-    x_feature = st.selectbox(
-        "가로축 속성",
-        options=selected_features,
-        index=0,
-        format_func=lambda x: FEATURE_LABELS[x],
-        key="plot_x",
-    )
-
-with axis_col2:
-    y_default = 1 if len(selected_features) > 1 else 0
-
-    y_feature = st.selectbox(
-        "세로축 속성",
-        options=selected_features,
-        index=y_default,
-        format_func=lambda x: FEATURE_LABELS[x],
-        key="plot_y",
-    )
-
-if x_feature == y_feature:
-    st.warning("가로축과 세로축은 서로 다른 속성을 선택해 주세요.")
-    st.stop()
-
-two_features = [x_feature, y_feature]
-
-X_train_2d = train_df[two_features].copy()
-X_test_2d = test_df[two_features].copy()
-
-# 두 속성만 사용하는 로지스틱 회귀
-model_2d = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler()),
-    ("classifier", LogisticRegression(
-        max_iter=2000,
-        random_state=42,
-    )),
-])
-
-model_2d.fit(X_train_2d, y_train)
-
-# 두 속성만 사용하는 결정 트리
-tree_2d = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("classifier", DecisionTreeClassifier(
-        max_depth=3,
-        min_samples_leaf=5,
-        random_state=42,
-    )),
-])
-
-tree_2d.fit(X_train_2d, y_train)
-
-# 훈련용 값으로 그림 범위 결정
-imputer_2d = model_2d.named_steps["imputer"]
-filled_train_2d = imputer_2d.transform(X_train_2d)
-
-x_min = float(filled_train_2d[:, 0].min())
-x_max = float(filled_train_2d[:, 0].max())
-y_min = float(filled_train_2d[:, 1].min())
-y_max = float(filled_train_2d[:, 1].max())
-
-x_pad = max((x_max - x_min) * 0.05, 0.1)
-y_pad = max((y_max - y_min) * 0.05, 0.1)
-
-x_grid = np.linspace(x_min - x_pad, x_max + x_pad, 120)
-y_grid = np.linspace(y_min - y_pad, y_max + y_pad, 120)
-xx, yy = np.meshgrid(x_grid, y_grid)
-
-grid_df = pd.DataFrame({
-    x_feature: xx.ravel(),
-    y_feature: yy.ravel(),
-})
-
-# 확률 모델의 뇌졸중 확률
-grid_prob = model_2d.predict_proba(grid_df)[
-    :, list(model_2d.named_steps["classifier"].classes_).index(1)
-].reshape(xx.shape)
-
-# 질문 모델의 예측 영역
-grid_tree = tree_2d.predict(grid_df).reshape(xx.shape)
-
-fig = go.Figure()
-
-# 결정 트리의 영역을 옅은 색으로 표시
-fig.add_trace(go.Contour(
-    x=x_grid,
-    y=y_grid,
-    z=grid_tree,
-    name="질문 모델 영역",
-    showscale=False,
-    opacity=0.22,
-    contours=dict(
-        start=0,
-        end=1,
-        size=1,
-        coloring="fill",
-        showlines=False,
-    ),
-    colorscale=[
-        [0.0, "#4C78A8"],
-        [0.499, "#4C78A8"],
-        [0.5, "#E45756"],
-        [1.0, "#E45756"],
-    ],
-    hoverinfo="skip",
-))
-
-# 로지스틱 회귀의 0.5 경계
-fig.add_trace(go.Contour(
-    x=x_grid,
-    y=y_grid,
-    z=grid_prob,
-    name="확률 모델 경계 (0.5)",
-    showscale=False,
-    contours=dict(
-        start=0.5,
-        end=0.5,
-        size=1,
-        coloring="lines",
-        showlabels=False,
-    ),
-    line=dict(color="#222222", width=3),
-    hoverinfo="skip",
-))
-
-# 채점용 사람들의 실제 결과
-plot_test = test_df[two_features].copy()
-plot_test["실제 결과"] = test_df["stroke"].map({
-    0: "뇌졸중 아님 (0)",
-    1: "뇌졸중 (1)",
-}).values
-plot_test["id"] = test_df["id"].astype(int).astype(str).values
-
-fig.add_trace(go.Scatter(
-    x=plot_test[x_feature],
-    y=plot_test[y_feature],
-    mode="markers+text",
-    name="채점용 사람",
-    text=plot_test["id"],
-    textposition="top center",
-    marker=dict(
-        size=13,
-        color=[
-            "#4C78A8" if value == "뇌졸중 아님 (0)" else "#E45756"
-            for value in plot_test["실제 결과"]
-        ],
-        line=dict(color="white", width=1.5),
-    ),
-    customdata=plot_test[["실제 결과"]],
-    hovertemplate=(
-        "ID: %{text}<br>"
-        + FEATURE_LABELS[x_feature] + ": %{x}<br>"
-        + FEATURE_LABELS[y_feature] + ": %{y}<br>"
-        + "실제 결과: %{customdata[0]}<extra></extra>"
-    ),
-))
-
-fig.update_layout(
-    title="채점용 데이터와 두 모델의 분류 영역",
-    xaxis_title=FEATURE_LABELS[x_feature],
-    yaxis_title=FEATURE_LABELS[y_feature],
-    legend_title="범례",
-    height=650,
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# 그림 범위 안에서 0.5 경계를 통과하는지 확인
-has_boundary = (
-    np.nanmin(grid_prob) <= 0.5
-    and np.nanmax(grid_prob) >= 0.5
-)
-
-if has_boundary:
-    st.success("확률 모델의 0.5 경계가 그림 범위 안에 있습니다.")
-else:
-    st.warning(
-        "확률 모델의 0.5 경계가 그림 범위 안에 없습니다. "
-        "현재 표시 범위에서 모든 지점이 같은 쪽으로 분류될 수 있습니다."
-    )
-
-st.caption(
-    "옅은 배경은 질문 모델의 예측 영역, 검은 선은 확률 모델의 "
-    "뇌졸중 확률 0.5 경계입니다. 점의 색은 실제 결과를 나타냅니다."
-)
-
-
-# ==================================================
-# 10. 분석 방법 설명
-# ==================================================
-with st.expander("모델과 평가 방법 설명"):
-    st.markdown(
-        """
-        - **확률 모델:** 로지스틱 회귀로 뇌졸중일 확률을 계산합니다.
-        - **질문 모델:** 결정 트리가 속성의 기준값을 질문합니다.
-        - **기준 모델:** 훈련용에서 더 많은 클래스를 모든 사람에게 예측합니다.
-        - **결측값 처리:** 선택한 속성에 한해 훈련용 중앙값으로 대체합니다.
-        - **크기 맞추기:** 로지스틱 회귀의 표준화는 훈련용 데이터만 사용합니다.
-        - **시각화:** 선택한 두 속성으로 별도의 모델을 다시 학습합니다.
-        - **주의:** 채점용은 세 명뿐이므로 정확도는 실습용 결과입니다.
-        """
-    )
+채점용 = pd.Series(df.index % 10 < 3, index=df.index)   # 열 명 중 앞 세 명이 채점용
+X = df[입력열].copy()
+y = df["stroke"]                                        # 1이면 뇌졸중, 0이면 아님. 뇌졸중이 양성이다
+if "bmi" in 입력열 and X["bmi"].isna().any():
+    중앙값 = float(X.loc[~채점용, "bmi"].median())
+    X["bmi"] = X["bmi"].fillna(중앙값)
+    st.warning(f"체질량지수가 비어 있는 사람은 훈련용의 중앙값 {중앙값:.1f}으로 채웠습니다.")
+
+
+def 학습(열들):
+    """고른 열로 두 모델을 학습해 돌려준다. 설정은 늘 같다."""
+    훈련 = X.loc[~채점용, 열들]
+    크기맞추기 = StandardScaler().fit(훈련)   # 크기 맞추기도 훈련용으로만 한다
+    확률모델 = LogisticRegression(max_iter=2000).fit(크기맞추기.transform(훈련), y[~채점용])
+    # 질문으로 답하는 모델은 값의 크기에 영향받지 않으므로 크기를 맞추지 않은 값을 그대로 사용한다
+    질문모델 = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=0).fit(훈련, y[~채점용])
+    return 크기맞추기, 확률모델, 질문모델
+
+
+크기맞추기, 확률모델, 질문모델 = 학습(입력열)
+많은쪽 = int(y[~채점용].mode()[0])                       # 훈련용에서 사람이 많은 범주
+실제 = y[채점용].to_numpy()
+
+st.info(f"훈련용 {int((~채점용).sum()):,}명(그중 뇌졸중 {int(y[~채점용].sum()):,}명)으로 학습하고, "
+        f"채점용 {int(채점용.sum()):,}명(그중 실제 뇌졸중 {int(실제.sum()):,}명)으로 채점합니다.")
+
+st.subheader("채점용 사람들에서의 정확도")
+예측 = {"확률로 답하는 모델": 확률모델.predict(크기맞추기.transform(X[채점용])),
+        "질문으로 답하는 모델": 질문모델.predict(X[채점용]),
+        "한쪽으로만 답하는 모델": pd.Series(많은쪽, index=y[채점용].index).to_numpy()}
+칸들 = st.columns(3)
+for 칸, (이름, 예측값) in zip(칸들, 예측.items()):
+    칸.metric(이름, f"{(예측값 == 실제).mean():.4f}")
+st.caption("소수 넷째 자리까지 적었습니다. 맨 오른쪽은 입력을 하나도 보지 않고 훈련용에서 사람이 많은 쪽으로만 "
+           "답하는 모델입니다. 세 값을 교재의 표에 적어 두세요.")
+
+st.subheader("고른 속성 가운데 둘을 축으로 놓고 본다")
+축칸 = st.columns(2)
+가로 = 축칸[0].selectbox("가로축", 입력열, index=0, format_func=우리말)
+세로후보 = [열 for 열 in 입력열 if 열 != 가로]
+세로 = 축칸[1].selectbox("세로축", 세로후보, index=0, format_func=우리말)
+
+두축 = [가로, 세로]
+그림크기맞추기, 그림확률모델, 그림질문모델 = 학습(두축)   # 그림은 두 축만으로 다시 학습한 모델로 그린다
+채점입력 = X[채점용]
+
+
+def 눈금(열):
+    """채점용에서 가장 작은 값부터 가장 큰 값까지 고르게 나눈 값들을 돌려준다."""
+    작은값, 큰값 = float(채점입력[열].min()), float(채점입력[열].max())
+    큰값 = 큰값 if 큰값 > 작은값 else 작은값 + 1.0
+    return [작은값 + (큰값 - 작은값) * i / (칸수 - 1) for i in range(칸수)]
+
+
+def 두줄로(값들):   # 한 줄로 늘어선 값을 세로줄마다 잘라 표 모양으로 만든다
+    return [값들[i * 칸수:(i + 1) * 칸수] for i in range(칸수)]
+
+
+가로눈금, 세로눈금 = 눈금(가로), 눈금(세로)
+격자 = pd.DataFrame([{가로: 가, 세로: 세} for 세 in 세로눈금 for 가 in 가로눈금])[두축]
+확률격자 = 그림확률모델.predict_proba(그림크기맞추기.transform(격자))[:, 1].tolist()
+마디번호 = 그림질문모델.apply(격자).tolist()          # 각 자리가 트리의 어느 마디에 떨어지는지
+자리 = {마디: 번호 for 번호, 마디 in enumerate(sorted(set(마디번호)))}
+마디수 = len(자리)
+색단계 = [[(번호 + 끝) / 마디수, 칸색[번호 % len(칸색)]] for 번호 in range(마디수) for 끝 in (0, 1)]
+
+그림 = go.Figure()
+그림.add_trace(go.Heatmap(x=가로눈금, y=세로눈금, z=두줄로([자리[마디] for 마디 in 마디번호]),
+                          colorscale=색단계, zmin=-0.5, zmax=마디수 - 0.5, opacity=0.45,
+                          showscale=False, hoverinfo="skip"))
+그림.add_trace(go.Contour(x=가로눈금, y=세로눈금, z=두줄로(확률격자),
+                          contours=dict(coloring="lines", start=0.5, end=0.5, size=1),
+                          line=dict(width=3, color="#2563eb"), showscale=False, hoverinfo="skip"))
+점표 = pd.DataFrame({"가로": 채점입력[가로].to_numpy(), "세로": 채점입력[세로].to_numpy(),
+                     "실제": pd.Series(실제).map({1: "뇌졸중 있음", 0: "뇌졸중 없음"}).to_numpy()})
+for 이름, 색 in (("뇌졸중 없음", "#94a3b8"), ("뇌졸중 있음", "#7f1d1d")):
+    한무리 = 점표[점표["실제"] == 이름]
+    그림.add_trace(go.Scatter(x=한무리["가로"], y=한무리["세로"], mode="markers", name=이름,
+                              marker=dict(size=6, color=색, opacity=0.5)))
+그림.update_layout(title=f"가로축 {우리말(가로)} · 세로축 {우리말(세로)}", xaxis_title=우리말(가로),
+                   yaxis_title=우리말(세로), height=560)
+st.plotly_chart(그림, width="stretch")
+if not (min(확률격자) <= 0.5 <= max(확률격자)):
+    st.info(f"이 그림 안에서 확률이 가장 높은 자리도 {max(확률격자):.2f}입니다. "
+            f"확률이 0.5를 넘는 자리가 없어 경계선이 그림 안에 없습니다.")
+st.caption("점은 채점용 사람들이고 색은 실제 뇌졸중 여부입니다. 파란 선은 확률로 답하는 모델이 0.5로 가르는 자리, "
+           "옅은 색으로 나뉜 바탕은 질문으로 답하는 모델이 두 축을 나눈 칸입니다. 고른 두 축만으로 다시 학습한 그림입니다.")
+
+st.subheader("질문으로 답하는 모델은 어떤 순서로 물었는가")
+st.text(export_text(질문모델, feature_names=[입력이름[열] for 열 in 입력열]))
+st.caption("맨 위가 첫 질문입니다. class가 1이면 뇌졸중, 0이면 아님이라고 답한 자리입니다.")
