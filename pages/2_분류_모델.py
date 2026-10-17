@@ -1,4 +1,4 @@
-pages/2_분류_모델.py# pages/2_분류_모델.py — 속성을 골라 두 모델을 학습하고, 두 축으로 자른 자리를 그림으로 본다
+# pages/2_분류_모델.py — 속성을 골라 두 모델을 학습하고, 두 축으로 자른 자리를 그림으로 본다
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
